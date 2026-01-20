@@ -7,32 +7,22 @@
 #include "interp.h"
 #include "quantise.h"
 
-void codec2_init(codec2_t *c2)
+int codec2_init_with_dsp(codec2_t *c2, const dsp_ops_t *dsp)
 {
-	c2->next_rn = 1; // random number geterator - seed
+	/* Store DSP backend */
+	c2->dsp = dsp;
+
+	c2->next_rn = 1; /* random number generator - seed */
 
 	for (int i = 0; i < M_PITCH; i++)
 		c2->Sn[i] = 1.0f;
 
 	memset(c2->Sn_, 0, sizeof(c2->Sn_));
 
-	/* static FFT mem allocations */
-	size_t mem;
-
-	/* FFT forward */
-	mem = sizeof(c2->fft_fwd_mem);
-	c2->fft_fwd_cfg = kiss_fft_alloc(FFT_ENC, 0, c2->fft_fwd_mem, &mem);
-
-	/* FFT real forward */
-	mem = sizeof(c2->fftr_fwd_mem);
-	c2->fftr_fwd_cfg = kiss_fftr_alloc(FFT_ENC, 0, c2->fftr_fwd_mem, &mem);
-
-	/* FFT real inverse */
-	mem = sizeof(c2->fftr_inv_mem);
-	c2->fftr_inv_cfg = kiss_fftr_alloc(FFT_DEC, 1, c2->fftr_inv_mem, &mem);
-
-	/* NLP FFT - reused (same type, direction, and size) */
-	c2->nlp.fftr_cfg = c2->fftr_fwd_cfg;
+	/* Initialize DSP backend (sets up FFT configs, etc.) */
+	if (c2->dsp->init(c2) != 0) {
+		return -1;
+	}
 
 	analysis_init(c2);
 	synthesis_init(c2);
@@ -57,6 +47,14 @@ void codec2_init(codec2_t *c2)
 	c2->prev_e_dec = 1;
 
 	nlp_init(&c2->nlp);
+
+	return 0;
+}
+
+void codec2_init(codec2_t *c2)
+{
+	/* Default to reference backend */
+	codec2_init_with_dsp(c2, dsp_ops_ref());
 }
 
 void codec2_encode(codec2_t *c2, uint8_t *bits, const int16_t *speech)

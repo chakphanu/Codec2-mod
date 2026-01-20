@@ -11,6 +11,7 @@
 
 #include "kiss_fft.h"
 #include "kiss_fftr.h"
+#include "dsp_ops.h"
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -123,10 +124,15 @@ typedef struct nlp_t
     kiss_fftr_cfg fftr_cfg;
     float fftr_buff[PE_FFT_SIZE];
     complex_t Fw[PE_FFT_SIZE / 2 + 1];
+    /* Interleaved complex FFT output buffer (for DSP backend) */
+    float fft_out[PE_FFT_SIZE * 2] __attribute__((aligned(16)));
 } nlp_t;
 
 typedef struct codec2_t
 {
+    /* DSP backend (injected at init time) */
+    const dsp_ops_t *dsp;
+
     uint32_t next_rn;
 
     float w[M_PITCH];
@@ -144,12 +150,12 @@ typedef struct codec2_t
     float prev_lsps_dec[LPC_ORD];
     float prev_e_dec;
 
+    /* kiss_fft configurations (used by reference backend) */
     kiss_fft_cfg fft_fwd_cfg;
     kiss_fftr_cfg fftr_fwd_cfg;
     kiss_fftr_cfg fftr_inv_cfg;
-    kiss_fft_cfg phase_fft_fwd_cfg;
-    kiss_fft_cfg phase_fft_inv_cfg;
 
+    /* Scratch buffer for FFT operations (interleaved complex format) */
     kiss_fft_cpx fft_buffer[FFT_ENC];
 
     /*
@@ -162,6 +168,9 @@ typedef struct codec2_t
     uint8_t fft_fwd_mem[FFT_FWD_MEM_BYTES];
     uint8_t fftr_fwd_mem[FFTR_MEM_BYTES];
     uint8_t fftr_inv_mem[FFTR_MEM_BYTES];
+
+    /* ESP-DSP working buffer (interleaved complex, 16-byte aligned) */
+    float fft_espdsp[FFT_ENC * 2] __attribute__((aligned(16)));
 } codec2_t;
 
 _Static_assert(sizeof(((codec2_t *)0)->fft_buffer) >= FFT_ENC * sizeof(kiss_fft_cpx), "fft_buffer too small for FFT_ENC scratch");

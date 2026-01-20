@@ -5,7 +5,6 @@
 
 static void make_analysis_window(
 	codec2_t *c2,
-	kiss_fft_cfg fft_fwd_cfg,
 	float *restrict w,
 	float *restrict W)
 {
@@ -13,7 +12,8 @@ static void make_analysis_window(
 	static const int nw2 = NW / 2;
 	static const int fe2 = FFT_ENC / 2;
 
-	complex_t *restrict wshift = c2->fft_buffer;
+	/* Use interleaved complex buffer for FFT */
+	float *wshift = (float *)c2->fft_buffer;
 
 	/* zero time-domain window */
 	memset(w, 0, M_PITCH * sizeof(float));
@@ -35,24 +35,28 @@ static void make_analysis_window(
 	for (int i = 0; i < M_PITCH; i++)
 		w[i] *= scale;
 
-	/* zero FFT buffer */
-	memset(wshift, 0, FFT_ENC * sizeof(*wshift));
+	/* zero FFT buffer (interleaved complex) */
+	memset(wshift, 0, FFT_ENC * 2 * sizeof(float));
 
-	/* circular shift */
-	for (int i = 0; i < nw2; i++)
-		wshift[i].r = w[i + mp2];
+	/* circular shift - pack real data into interleaved complex */
+	for (int i = 0; i < nw2; i++) {
+		wshift[2*i] = w[i + mp2];     /* real */
+		wshift[2*i + 1] = 0.0f;       /* imag */
+	}
 
-	for (int i = FFT_ENC - nw2, j = mp2 - nw2; i < FFT_ENC; i++, j++)
-		wshift[i].r = w[j];
+	for (int i = FFT_ENC - nw2, j = mp2 - nw2; i < FFT_ENC; i++, j++) {
+		wshift[2*i] = w[j];           /* real */
+		wshift[2*i + 1] = 0.0f;       /* imag */
+	}
 
-	/* FFT */
-	kiss_fft(fft_fwd_cfg, wshift, wshift);
+	/* FFT via DSP backend */
+	c2->dsp->fft_forward(c2, wshift, FFT_ENC);
 
-	/* rearrange frequency response */
+	/* rearrange frequency response (extract real parts) */
 	for (int i = 0; i < fe2; i++)
 	{
-		W[i] = wshift[i + fe2].r;
-		W[i + fe2] = wshift[i].r;
+		W[i] = wshift[2*(i + fe2)];       /* real part of wshift[i + fe2] */
+		W[i + fe2] = wshift[2*i];         /* real part of wshift[i] */
 	}
 }
 
@@ -286,22 +290,30 @@ static void est_voicing_mbe(model_t *restrict model, const complex_t *restrict S
 	}
 }
 
-static void dft_speech(kiss_fft_cfg fft_fwd_cfg, complex_t *Sw, const float *Sn, const float *w)
+static void dft_speech(codec2_t *c2, complex_t *Sw, const float *Sn, const float *w)
 {
-	memset(Sw, 0, FFT_ENC * sizeof(*Sw));
+	float *fft_buf = (float *)Sw;  /* reuse as interleaved complex buffer */
+
+	/* Zero interleaved complex buffer */
+	memset(fft_buf, 0, FFT_ENC * 2 * sizeof(float));
 
 	/* Centre analysis window on time axis, we need to arrange input
 	   to FFT this way to make FFT phases correct */
 	/* move 2nd half to start of FFT input vector */
-	for (int i = 0; i < NW / 2; i++)
-		Sw[i].r = Sn[i + M_PITCH / 2] * w[i + M_PITCH / 2];
+	for (int i = 0; i < NW / 2; i++) {
+		fft_buf[2*i] = Sn[i + M_PITCH / 2] * w[i + M_PITCH / 2];  /* real */
+	}
 
 	/* move 1st half to end of FFT input vector */
-	for (int i = 0; i < NW / 2; i++)
-		Sw[FFT_ENC - NW / 2 + i].r =
-			Sn[i + M_PITCH / 2 - NW / 2] * w[i + M_PITCH / 2 - NW / 2];
+	for (int i = 0; i < NW / 2; i++) {
+		int idx = FFT_ENC - NW / 2 + i;
+		fft_buf[2*idx] = Sn[i + M_PITCH / 2 - NW / 2] * w[i + M_PITCH / 2 - NW / 2];
+	}
 
-	kiss_fft(fft_fwd_cfg, Sw, Sw);
+	/* FFT via DSP backend */
+	c2->dsp->fft_forward(c2, fft_buf, FFT_ENC);
+
+	/* Result is already in Sw (aliased via fft_buf) */
 }
 
 void analyse_one_frame(
@@ -318,10 +330,10 @@ void analyse_one_frame(
 	for (int i = 0; i < N_SAMP; i++)
 		c2->Sn[i + M_PITCH - N_SAMP] = speech[i];
 
-	dft_speech(c2->fft_fwd_cfg, Sw, c2->Sn, c2->w);
+	dft_speech(c2, Sw, c2->Sn, c2->w);
 
 	/* Estimate pitch */
-	nlp(&c2->nlp, c2->Sn, &pitch, &c2->prev_f0_enc);
+	nlp(c2, c2->Sn, &pitch, &c2->prev_f0_enc);
 	model->Wo = TWO_PI / pitch;
 	model->L = M_PI / model->Wo;
 
@@ -335,5 +347,5 @@ void analyse_one_frame(
 
 void analysis_init(codec2_t *c2)
 {
-	make_analysis_window(c2, c2->fft_fwd_cfg, c2->w, c2->W);
+	make_analysis_window(c2, c2->w, c2->W);
 }

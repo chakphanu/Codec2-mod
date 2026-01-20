@@ -124,12 +124,13 @@ static float post_process_sub_multiples(complex_t *Fw, float gmax, int gmax_bin,
 }
 
 float nlp(
-    nlp_t *restrict nlp,
-    const float *restrict Sn, /* input speech vector */
-    float *restrict pitch,    /* estimated pitch period in samples at current Fs    */
-    float *restrict prev_f0   /* previous pitch f0 in Hz, memory for pitch tracking */
+    codec2_t *c2,
+    const float *restrict Sn,
+    float *restrict pitch,
+    float *restrict prev_f0
 )
 {
+    nlp_t *restrict nlp = &c2->nlp;
     float notch;                      /* current notch filter output          */
     complex_t *restrict Fw = nlp->Fw; /* DFT of squared signal (input/output) */
     float gmax;
@@ -142,11 +143,8 @@ float nlp(
     static const int START_POS = M_PITCH - N_SAMP;
 
     /* Square, notch filter at DC, and LP filter vector */
-    /* Square latest input samples */
-    for (int i = START_POS; i < m; i++)
-    {
-        nlp->sq[i] = Sn[i] * Sn[i];
-    }
+    /* Square latest input samples using SIMD vectorized multiply */
+    c2->dsp->vmul(&Sn[START_POS], &Sn[START_POS], &nlp->sq[START_POS], n);
 
     for (int i = START_POS; i < m; i++)
     { /* notch filter at DC */
@@ -196,12 +194,11 @@ float nlp(
     /* Decimate and DFT */
     memset(nlp->fftr_buff, 0, sizeof(nlp->fftr_buff));
 
-    for (int i = 0; i < NDEC; i++)
-    {
-        nlp->fftr_buff[i] = nlp->sq_fir[i] * nlp->w[i];
-    }
+    /* Apply window using SIMD vectorized multiply */
+    c2->dsp->vmul(nlp->sq_fir, nlp->w, nlp->fftr_buff, NDEC);
 
-    kiss_fftr(nlp->fftr_cfg, nlp->fftr_buff, Fw);
+    /* Real FFT via DSP backend */
+    c2->dsp->fftr_forward(c2, nlp->fftr_buff, (float *)Fw, PE_FFT_SIZE);
 
     for (int i = 0; i < PE_FFT_SIZE / 2 + 1; i++)
     {

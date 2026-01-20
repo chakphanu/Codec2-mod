@@ -3,11 +3,20 @@
 
 #include "codec2_internal.h"
 
+/*
+ * Non-Linear Pitch (NLP) estimator
+ *
+ * @param c2       Codec state (contains nlp_t and DSP backend)
+ * @param Sn       Input speech vector
+ * @param pitch    Estimated pitch period in samples at current Fs
+ * @param prev_f0  Previous pitch f0 in Hz, memory for pitch tracking
+ * @return         Best f0 estimate in Hz
+ */
 float nlp(
-    nlp_t *restrict nlp,
-    const float *restrict Sn, /* input speech vector */
-    float *restrict pitch,    /* estimated pitch period in samples at current Fs    */
-    float *restrict prev_f0   /* previous pitch f0 in Hz, memory for pitch tracking */
+    codec2_t *c2,
+    const float *restrict Sn,
+    float *restrict pitch,
+    float *restrict prev_f0
 );
 
 void nlp_init(nlp_t *nlp);

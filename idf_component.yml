@@ -1,0 +1,5 @@
+## Codec2-mod IDF Component manifest
+## This file declares dependencies on ESP-IDF components
+
+dependencies:
+  espressif/esp-dsp: "^1.4.0"

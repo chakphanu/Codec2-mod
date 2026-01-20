@@ -179,7 +179,6 @@ static void ear_protection(float *in_out, int n)
 
 static void synthesise(
 	codec2_t *c2,
-	kiss_fftr_cfg fftr_inv_cfg,
 	float *Sn_,					   /* time domain synthesised signal              */
 	const model_t *restrict model, /* ptr to model parameters for this frame      */
 	const float *restrict Pn,	   /* time domain Parzen window                   */
@@ -215,8 +214,8 @@ static void synthesise(
 		Sw_[b].i = model->A[l] * s;
 	}
 
-	/* Perform inverse DFT */
-	kiss_fftri(fftr_inv_cfg, Sw_, sw_);
+	/* Inverse real FFT via DSP backend */
+	c2->dsp->fftr_inverse(c2, (float *)Sw_, sw_, FFT_DEC);
 
 	/* Overlap add to previous samples */
 	for (int i = 0; i < N_SAMP - 1; i++)
@@ -230,11 +229,12 @@ static void synthesise(
 
 	if (shift)
 	{
-		for (int j = 0; j < N_SAMP + 1; j++)
-			dst[j] = src[j] * win[j];
+		/* Use SIMD vectorized multiply for windowing */
+		c2->dsp->vmul(src, win, dst, N_SAMP + 1);
 	}
 	else
 	{
+		/* Accumulate case - no SIMD fused multiply-add available */
 		for (int j = 0; j < N_SAMP + 1; j++)
 			dst[j] += src[j] * win[j];
 	}
@@ -252,7 +252,7 @@ void synthesise_one_frame(
 	sample_phase(model, H, Aw);
 	phase_synth_zero_order(c2, model, &c2->ex_phase, H);
 	postfilter(c2, model, &c2->bg_est);
-	synthesise(c2, c2->fftr_inv_cfg, c2->Sn_, model, c2->Pn, 1);
+	synthesise(c2, c2->Sn_, model, c2->Pn, 1);
 
 	for (int i = 0; i < N_SAMP; i++)
 	{

@@ -17,15 +17,15 @@ const float bw_gamma[LPC_ORD + 1] = {
     0.941594350210212};
 
 static void autocorrelate(
+    codec2_t *c2,
     const float *restrict Sn, /* frame of Nsam windowed speech samples */
     float *restrict Rn        /* array of P+1 autocorrelation coefficients */
 )
 {
+    /* Use SIMD vectorized dot product for each lag */
     for (int j = 0; j < LPC_ORD + 1; j++)
     {
-        Rn[j] = 0.0;
-        for (int i = 0; i < M_PITCH - j; i++)
-            Rn[j] += Sn[i] * Sn[i + j];
+        c2->dsp->dotprod(&Sn[j], &Sn[0], &Rn[j], M_PITCH - j);
     }
 }
 
@@ -276,7 +276,8 @@ void aks_to_mag2(codec2_t *c2,
     for (int i = 0; i <= LPC_ORD; i++)
         a[i] = ak[i];
 
-    kiss_fftr(c2->fftr_fwd_cfg, a, Aw);
+    /* Real FFT via DSP backend */
+    c2->dsp->fftr_forward(c2, a, (float *)Aw, FFT_ENC);
 
     for (int i = 0; i < FFT_ENC / 2; i++)
     {
@@ -295,9 +296,9 @@ void aks_to_mag2(codec2_t *c2,
         g *= LPCPF_GAMMA;
     }
 
-    /* FFT of A_gamma */
+    /* FFT of A_gamma via DSP backend */
     complex_t *Awg = c2->fft_buffer; /* reuse FFT scratch */
-    kiss_fftr(c2->fftr_fwd_cfg, ag, Awg);
+    c2->dsp->fftr_forward(c2, ag, (float *)Awg, FFT_ENC);
 
     /* reuse Awg storage for A2g */
     float *A2g = (float *)Awg;
@@ -400,7 +401,7 @@ float speech_to_uq_lsps(
         return 0.0f;
     }
 
-    autocorrelate(Wn, R);
+    autocorrelate(c2, Wn, R);
     levinson_durbin(R, ak);
 
     E = 0.0f;
