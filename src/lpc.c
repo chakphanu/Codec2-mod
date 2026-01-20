@@ -21,12 +21,18 @@ static void autocorrelate(
     float *restrict Rn        /* array of P+1 autocorrelation coefficients */
 )
 {
+#ifdef CODEC2_ESP32S3_DSP
+    /* Use esp-dsp SIMD-accelerated dot product for autocorrelation
+     * This provides ~4x speedup on ESP32-S3 PIE unit */
+    codec2_autocorrelate_simd(Sn, Rn, M_PITCH, LPC_ORD);
+#else
     for (int j = 0; j < LPC_ORD + 1; j++)
     {
         Rn[j] = 0.0;
         for (int i = 0; i < M_PITCH - j; i++)
             Rn[j] += Sn[i] * Sn[i + j];
     }
+#endif
 }
 
 static void levinson_durbin(
@@ -276,12 +282,25 @@ void aks_to_mag2(codec2_t *c2,
     for (int i = 0; i <= LPC_ORD; i++)
         a[i] = ak[i];
 
+#ifdef CODEC2_ESP32S3_DSP
+    /* Use esp-dsp SIMD-accelerated real FFT */
+    codec2_fftr_forward(a, c2->fft_espdsp, FFT_ENC);
+
+    /* Convert to complex_t format and compute magnitude squared */
+    for (int i = 0; i < FFT_ENC / 2; i++)
+    {
+        Aw[i].r = c2->fft_espdsp[2*i];
+        Aw[i].i = c2->fft_espdsp[2*i + 1];
+        A2[i] = Aw[i].r * Aw[i].r + Aw[i].i * Aw[i].i + 1e-6f;
+    }
+#else
     kiss_fftr(c2->fftr_fwd_cfg, a, Aw);
 
     for (int i = 0; i < FFT_ENC / 2; i++)
     {
         A2[i] = Aw[i].r * Aw[i].r + Aw[i].i * Aw[i].i + 1e-6f;
     }
+#endif
 
     /* build ak_gamma */
     float *ag = (float *)c2->fft_buffer;
@@ -297,7 +316,18 @@ void aks_to_mag2(codec2_t *c2,
 
     /* FFT of A_gamma */
     complex_t *Awg = c2->fft_buffer; /* reuse FFT scratch */
+#ifdef CODEC2_ESP32S3_DSP
+    codec2_fftr_forward(ag, c2->fft_espdsp, FFT_ENC);
+
+    /* Convert to complex_t format */
+    for (int i = 0; i < FFT_ENC / 2; i++)
+    {
+        Awg[i].r = c2->fft_espdsp[2*i];
+        Awg[i].i = c2->fft_espdsp[2*i + 1];
+    }
+#else
     kiss_fftr(c2->fftr_fwd_cfg, ag, Awg);
+#endif
 
     /* reuse Awg storage for A2g */
     float *A2g = (float *)Awg;

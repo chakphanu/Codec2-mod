@@ -179,7 +179,7 @@ static void ear_protection(float *in_out, int n)
 
 static void synthesise(
 	codec2_t *c2,
-	kiss_fftr_cfg fftr_inv_cfg,
+	kiss_fftr_cfg fftr_inv_cfg __attribute__((unused)),
 	float *Sn_,					   /* time domain synthesised signal              */
 	const model_t *restrict model, /* ptr to model parameters for this frame      */
 	const float *restrict Pn,	   /* time domain Parzen window                   */
@@ -187,7 +187,9 @@ static void synthesise(
 )
 {
 	// NOTE: lifetimes do not overlap
+#ifndef CODEC2_ESP32S3_DSP
 	complex_t *Sw_ = c2->fft_buffer;	  /* DFT of synthesised signal */
+#endif
 	float *sw_ = (float *)c2->fft_buffer; /* synthesised signal */
 
 	if (shift)
@@ -197,6 +199,49 @@ static void synthesise(
 		Sn_[N_SAMP - 1] = 0.0;
 	}
 
+#ifdef CODEC2_ESP32S3_DSP
+	/* Zero the interleaved complex buffer */
+	memset(c2->fft_espdsp, 0, FFT_DEC * 2 * sizeof(float));
+
+	/* Set up frequency domain synthesised speech in interleaved format */
+	const float Wo_bin = model->Wo * FFT_1_R;
+
+	for (int l = 1; l <= model->L; l++)
+	{
+		int b = (int)(l * Wo_bin + 0.5);
+		if (b > ((FFT_DEC / 2) - 1))
+		{
+			b = (FFT_DEC / 2) - 1;
+		}
+		float s, c;
+		codec2_sincosf(model->phi[l], &s, &c);
+		float re = model->A[l] * c;
+		float im = model->A[l] * s;
+
+		/* Set positive frequency bin */
+		c2->fft_espdsp[2*b] = re;
+		c2->fft_espdsp[2*b + 1] = im;
+
+		/* Set negative frequency bin for Hermitian symmetry (required for complex IFFT)
+		 * For real output: X[N-k] = conj(X[k]), i.e., same real, negated imag
+		 * This ensures the inverse FFT produces a real-valued signal */
+		if (b > 0 && b < FFT_DEC / 2)
+		{
+			int neg_b = FFT_DEC - b;
+			c2->fft_espdsp[2*neg_b] = re;       /* Real: same */
+			c2->fft_espdsp[2*neg_b + 1] = -im;  /* Imag: negated (conjugate) */
+		}
+	}
+
+	/* Perform inverse DFT using esp-dsp SIMD acceleration */
+	codec2_fft_inverse(c2->fft_espdsp, FFT_DEC);
+
+	/* Extract real parts to sw_ (reusing fft_buffer as float array) */
+	for (int i = 0; i < FFT_DEC; i++)
+	{
+		sw_[i] = c2->fft_espdsp[2*i];
+	}
+#else
 	memset(Sw_, 0, (FFT_DEC / 2 + 1) * sizeof(complex_t)); // original Sw_ size was this
 
 	/* Now set up frequency domain synthesised speech */
@@ -217,6 +262,7 @@ static void synthesise(
 
 	/* Perform inverse DFT */
 	kiss_fftri(fftr_inv_cfg, Sw_, sw_);
+#endif
 
 	/* Overlap add to previous samples */
 	for (int i = 0; i < N_SAMP - 1; i++)

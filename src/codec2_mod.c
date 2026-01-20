@@ -16,7 +16,24 @@ void codec2_init(codec2_t *c2)
 
 	memset(c2->Sn_, 0, sizeof(c2->Sn_));
 
-	/* static FFT mem allocations */
+#ifdef CODEC2_ESP32S3_DSP
+	/* Initialize esp-dsp FFT tables (called once, uses global state) */
+	static int espdsp_initialized = 0;
+	if (!espdsp_initialized) {
+		esp_err_t ret = codec2_espdsp_init(FFT_ENC);
+		if (ret != ESP_OK) {
+			ESP_LOGE("CODEC2", "esp-dsp FFT init failed: %d", ret);
+		}
+		espdsp_initialized = 1;
+	}
+
+	/* Zero esp-dsp specific buffers */
+	memset(c2->fft_espdsp, 0, sizeof(c2->fft_espdsp));
+	memset(c2->lpc_R, 0, sizeof(c2->lpc_R));
+	memset(c2->lpc_Wn, 0, sizeof(c2->lpc_Wn));
+#endif
+
+	/* static FFT mem allocations (kiss_fft, used as fallback or when esp-dsp not available) */
 	size_t mem;
 
 	/* FFT forward */

@@ -1,0 +1,15 @@
+# ESP-IDF Component Registry manifest
+# This component provides Codec2 3200 bps speech codec optimized for ESP32-S3
+
+version: "1.0.0"
+description: "Codec2-mod: M17 Project optimized speech codec with esp-dsp acceleration"
+url: "https://github.com/M17-Project/codec2_mod"
+
+dependencies:
+  # ESP-DSP library for SIMD-optimized DSP primitives
+  # Required for PIE/SIMD acceleration on ESP32-S3
+  espressif/esp-dsp: "^1.3.0"
+
+  # IDF version requirement
+  idf:
+    version: ">=5.0.0"

@@ -201,12 +201,26 @@ float nlp(
         nlp->fftr_buff[i] = nlp->sq_fir[i] * nlp->w[i];
     }
 
+#ifdef CODEC2_ESP32S3_DSP
+    /* Use esp-dsp SIMD-accelerated real FFT */
+    codec2_fftr_forward(nlp->fftr_buff, nlp->fft_interleaved, PE_FFT_SIZE);
+
+    /* Compute power spectrum from interleaved complex output */
+    for (int i = 0; i < PE_FFT_SIZE / 2 + 1; i++)
+    {
+        float re = nlp->fft_interleaved[2*i];
+        float im = nlp->fft_interleaved[2*i + 1];
+        Fw[i].r = re * re + im * im;
+        Fw[i].i = 0.0f; /* not used, but clear for safety */
+    }
+#else
     kiss_fftr(nlp->fftr_cfg, nlp->fftr_buff, Fw);
 
     for (int i = 0; i < PE_FFT_SIZE / 2 + 1; i++)
     {
         Fw[i].r = Fw[i].r * Fw[i].r + Fw[i].i * Fw[i].i;
     }
+#endif
 
     /* todo: express everything in f0, as pitch in samples is dep on Fs */
     int pmin = P_MIN;

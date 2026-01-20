@@ -5,7 +5,7 @@
 
 static void make_analysis_window(
 	codec2_t *c2,
-	kiss_fft_cfg fft_fwd_cfg,
+	kiss_fft_cfg fft_fwd_cfg __attribute__((unused)),
 	float *restrict w,
 	float *restrict W)
 {
@@ -13,7 +13,9 @@ static void make_analysis_window(
 	static const int nw2 = NW / 2;
 	static const int fe2 = FFT_ENC / 2;
 
+#ifndef CODEC2_ESP32S3_DSP
 	complex_t *restrict wshift = c2->fft_buffer;
+#endif
 
 	/* zero time-domain window */
 	memset(w, 0, M_PITCH * sizeof(float));
@@ -35,6 +37,32 @@ static void make_analysis_window(
 	for (int i = 0; i < M_PITCH; i++)
 		w[i] *= scale;
 
+#ifdef CODEC2_ESP32S3_DSP
+	/* Use esp-dsp SIMD-accelerated FFT */
+	float *fft_buf = c2->fft_espdsp;
+
+	/* zero interleaved FFT buffer */
+	memset(fft_buf, 0, FFT_ENC * 2 * sizeof(float));
+
+	/* circular shift into interleaved format */
+	for (int i = 0; i < nw2; i++) {
+		fft_buf[2*i] = w[i + mp2];
+	}
+
+	for (int i = FFT_ENC - nw2, j = mp2 - nw2; i < FFT_ENC; i++, j++) {
+		fft_buf[2*i] = w[j];
+	}
+
+	/* esp-dsp FFT */
+	codec2_fft_forward(fft_buf, FFT_ENC);
+
+	/* rearrange frequency response (extract real parts) */
+	for (int i = 0; i < fe2; i++)
+	{
+		W[i] = fft_buf[2*(i + fe2)];       /* real part of bin i+fe2 */
+		W[i + fe2] = fft_buf[2*i];          /* real part of bin i */
+	}
+#else
 	/* zero FFT buffer */
 	memset(wshift, 0, FFT_ENC * sizeof(*wshift));
 
@@ -54,6 +82,7 @@ static void make_analysis_window(
 		W[i] = wshift[i + fe2].r;
 		W[i + fe2] = wshift[i].r;
 	}
+#endif
 }
 
 static void hs_pitch_refinement(model_t *restrict model, const complex_t *restrict Sw, float pmin, float pmax, float pstep)
@@ -286,6 +315,42 @@ static void est_voicing_mbe(model_t *restrict model, const complex_t *restrict S
 	}
 }
 
+#ifdef CODEC2_ESP32S3_DSP
+/*
+ * DFT of windowed speech using esp-dsp SIMD acceleration
+ * Uses interleaved complex format for PIE vector operations
+ */
+static void dft_speech_espdsp(float *fft_buf, complex_t *Sw, const float *Sn, const float *w)
+{
+	/* Zero the interleaved buffer */
+	memset(fft_buf, 0, FFT_ENC * 2 * sizeof(float));
+
+	/* Centre analysis window on time axis, we need to arrange input
+	   to FFT this way to make FFT phases correct */
+	/* move 2nd half to start of FFT input vector */
+	for (int i = 0; i < NW / 2; i++) {
+		fft_buf[2*i] = Sn[i + M_PITCH / 2] * w[i + M_PITCH / 2];
+		/* fft_buf[2*i + 1] = 0.0f; already zeroed */
+	}
+
+	/* move 1st half to end of FFT input vector */
+	for (int i = 0; i < NW / 2; i++) {
+		int idx = FFT_ENC - NW / 2 + i;
+		fft_buf[2*idx] = Sn[i + M_PITCH / 2 - NW / 2] * w[i + M_PITCH / 2 - NW / 2];
+	}
+
+	/* esp-dsp in-place FFT with SIMD acceleration */
+	codec2_fft_forward(fft_buf, FFT_ENC);
+
+	/* Convert back to kiss_fft_cpx format for compatibility */
+	for (int i = 0; i < FFT_ENC; i++) {
+		Sw[i].r = fft_buf[2*i];
+		Sw[i].i = fft_buf[2*i + 1];
+	}
+}
+#endif
+
+#ifndef CODEC2_ESP32S3_DSP
 static void dft_speech(kiss_fft_cfg fft_fwd_cfg, complex_t *Sw, const float *Sn, const float *w)
 {
 	memset(Sw, 0, FFT_ENC * sizeof(*Sw));
@@ -303,6 +368,7 @@ static void dft_speech(kiss_fft_cfg fft_fwd_cfg, complex_t *Sw, const float *Sn,
 
 	kiss_fft(fft_fwd_cfg, Sw, Sw);
 }
+#endif
 
 void analyse_one_frame(
 	codec2_t *c2,
@@ -318,7 +384,12 @@ void analyse_one_frame(
 	for (int i = 0; i < N_SAMP; i++)
 		c2->Sn[i + M_PITCH - N_SAMP] = speech[i];
 
+#ifdef CODEC2_ESP32S3_DSP
+	/* Use esp-dsp SIMD-accelerated FFT */
+	dft_speech_espdsp(c2->fft_espdsp, Sw, c2->Sn, c2->w);
+#else
 	dft_speech(c2->fft_fwd_cfg, Sw, c2->Sn, c2->w);
+#endif
 
 	/* Estimate pitch */
 	nlp(&c2->nlp, c2->Sn, &pitch, &c2->prev_f0_enc);

@@ -4,11 +4,15 @@
 /*
   This work uses code written by David Rowe VK5DGR et al.
   https://github.com/drowe67/codec2
+
+  ESP32-S3 optimizations added for PIE/SIMD acceleration via esp-dsp
 */
 
 #include <stdint.h>
 #include <math.h>
+#include <string.h>
 
+#include "codec2_esp32.h"
 #include "kiss_fft.h"
 #include "kiss_fftr.h"
 
@@ -116,41 +120,66 @@ typedef struct model_t
 
 typedef struct nlp_t
 {
-    float w[PMAX_M / DEC];
-    float sq[PMAX_M];
-    float sq_fir[NDEC];
+    float w[PMAX_M / DEC] CODEC2_ALIGNED;
+    float sq[PMAX_M] CODEC2_ALIGNED;
+    float sq_fir[NDEC] CODEC2_ALIGNED;
     float mem_x, mem_y;
     kiss_fftr_cfg fftr_cfg;
-    float fftr_buff[PE_FFT_SIZE];
-    complex_t Fw[PE_FFT_SIZE / 2 + 1];
+    float fftr_buff[PE_FFT_SIZE] CODEC2_ALIGNED;
+    complex_t Fw[PE_FFT_SIZE / 2 + 1] CODEC2_ALIGNED;
+#ifdef CODEC2_ESP32S3_DSP
+    /* Interleaved complex buffer for esp-dsp FFT [Re0,Im0,Re1,Im1,...] */
+    float fft_interleaved[PE_FFT_SIZE * 2] CODEC2_ALIGNED;
+#endif
 } nlp_t;
 
 typedef struct codec2_t
 {
     uint32_t next_rn;
 
-    float w[M_PITCH];
-    float W[FFT_ENC];
-    float Pn[2 * N_SAMP];
-    float Sn[M_PITCH];
+    /* Analysis window and spectrum - aligned for SIMD */
+    float w[M_PITCH] CODEC2_ALIGNED;
+    float W[FFT_ENC] CODEC2_ALIGNED;
+    float Pn[2 * N_SAMP] CODEC2_ALIGNED;
+    float Sn[M_PITCH] CODEC2_ALIGNED;
     nlp_t nlp;
 
-    float Sn_[2 * N_SAMP];
+    /* Synthesis buffers - aligned for SIMD */
+    float Sn_[2 * N_SAMP] CODEC2_ALIGNED;
     float ex_phase;
     float bg_est;
     float prev_f0_enc;
 
     model_t prev_model_dec;
-    float prev_lsps_dec[LPC_ORD];
+    float prev_lsps_dec[LPC_ORD] CODEC2_ALIGNED;
     float prev_e_dec;
 
+    /* kiss_fft configurations (used when esp-dsp not available) */
     kiss_fft_cfg fft_fwd_cfg;
     kiss_fftr_cfg fftr_fwd_cfg;
     kiss_fftr_cfg fftr_inv_cfg;
     kiss_fft_cfg phase_fft_fwd_cfg;
     kiss_fft_cfg phase_fft_inv_cfg;
 
-    kiss_fft_cpx fft_buffer[FFT_ENC];
+    /* FFT scratch buffer - aligned for SIMD operations */
+    kiss_fft_cpx fft_buffer[FFT_ENC] CODEC2_ALIGNED;
+
+#ifdef CODEC2_ESP32S3_DSP
+    /*
+     * esp-dsp interleaved complex buffer for FFT operations
+     * Format: [Re0, Im0, Re1, Im1, ...]
+     * Size: FFT_ENC * 2 floats
+     * NOTE: When codec2_t is statically allocated, ensure it's in internal SRAM
+     * for optimal PIE performance (use CODEC2_SRAM_ATTR on the instance)
+     */
+    float fft_espdsp[FFT_ENC * 2] CODEC2_ALIGNED;
+
+    /* LPC autocorrelation buffer - aligned for dsps_dotprod_f32 */
+    float lpc_R[LPC_ORD + 1] CODEC2_ALIGNED;
+
+    /* Windowed speech buffer for LPC analysis - aligned for SIMD */
+    float lpc_Wn[M_PITCH] CODEC2_ALIGNED;
+#endif
 
     /*
      * fft_buffer scratch usage:
@@ -159,11 +188,36 @@ typedef struct codec2_t
      * - sizes are semantic (FFT_ENC, FFT_DEC)
      * Violating this will cause silent DSP corruption.
      */
-    uint8_t fft_fwd_mem[FFT_FWD_MEM_BYTES];
-    uint8_t fftr_fwd_mem[FFTR_MEM_BYTES];
-    uint8_t fftr_inv_mem[FFTR_MEM_BYTES];
+    uint8_t fft_fwd_mem[FFT_FWD_MEM_BYTES] CODEC2_ALIGNED;
+    uint8_t fftr_fwd_mem[FFTR_MEM_BYTES] CODEC2_ALIGNED;
+    uint8_t fftr_inv_mem[FFTR_MEM_BYTES] CODEC2_ALIGNED;
 } codec2_t;
 
 _Static_assert(sizeof(((codec2_t *)0)->fft_buffer) >= FFT_ENC * sizeof(kiss_fft_cpx), "fft_buffer too small for FFT_ENC scratch");
+
+/*
+ * ESP32-S3 specific compile-time checks
+ * Ensure data structures are compatible with esp-dsp SIMD operations
+ */
+#ifdef CODEC2_ESP32S3_DSP
+
+/* Verify kiss_fft_cpx is compatible with interleaved float format
+ * Required for safe casting between formats */
+_Static_assert(sizeof(kiss_fft_cpx) == 2 * sizeof(float),
+    "kiss_fft_cpx must be 8 bytes for esp-dsp interleaved format compatibility");
+
+/* Verify esp-dsp FFT buffer is large enough */
+_Static_assert(sizeof(((codec2_t *)0)->fft_espdsp) >= FFT_ENC * 2 * sizeof(float),
+    "fft_espdsp must hold FFT_ENC interleaved complex values");
+
+/* Verify LPC autocorrelation buffer is correctly sized */
+_Static_assert(sizeof(((codec2_t *)0)->lpc_R) >= (LPC_ORD + 1) * sizeof(float),
+    "lpc_R must hold LPC_ORD+1 autocorrelation coefficients");
+
+/* Verify NLP interleaved FFT buffer is correctly sized */
+_Static_assert(sizeof(((nlp_t *)0)->fft_interleaved) >= PE_FFT_SIZE * 2 * sizeof(float),
+    "nlp fft_interleaved must hold PE_FFT_SIZE interleaved complex values");
+
+#endif /* CODEC2_ESP32S3_DSP */
 
 #endif /* CODEC2_MOD_INTERNAL_H */
