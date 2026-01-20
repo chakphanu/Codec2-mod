@@ -143,10 +143,15 @@ float nlp(
 
     /* Square, notch filter at DC, and LP filter vector */
     /* Square latest input samples */
+#ifdef CODEC2_ESP32S3_DSP
+    /* Use SIMD vectorized multiply for squaring */
+    codec2_vmul(&Sn[START_POS], &Sn[START_POS], &nlp->sq[START_POS], n);
+#else
     for (int i = START_POS; i < m; i++)
     {
         nlp->sq[i] = Sn[i] * Sn[i];
     }
+#endif
 
     for (int i = START_POS; i < m; i++)
     { /* notch filter at DC */
@@ -196,10 +201,15 @@ float nlp(
     /* Decimate and DFT */
     memset(nlp->fftr_buff, 0, sizeof(nlp->fftr_buff));
 
+#ifdef CODEC2_ESP32S3_DSP
+    /* Use SIMD vectorized multiply for windowing */
+    codec2_vmul(nlp->sq_fir, nlp->w, nlp->fftr_buff, NDEC);
+#else
     for (int i = 0; i < NDEC; i++)
     {
         nlp->fftr_buff[i] = nlp->sq_fir[i] * nlp->w[i];
     }
+#endif
 
 #ifdef CODEC2_ESP32S3_DSP
     /* Use esp-dsp SIMD-accelerated real FFT */

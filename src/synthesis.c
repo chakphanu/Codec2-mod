@@ -276,8 +276,13 @@ static void synthesise(
 
 	if (shift)
 	{
+#ifdef CODEC2_ESP32S3_DSP
+		/* Use SIMD vectorized multiply for windowing */
+		codec2_vmul(src, win, dst, N_SAMP + 1);
+#else
 		for (int j = 0; j < N_SAMP + 1; j++)
 			dst[j] = src[j] * win[j];
+#endif
 	}
 	else
 	{
