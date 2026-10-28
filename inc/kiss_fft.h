@@ -14,6 +14,8 @@
 #include <math.h>
 #include <string.h>
 
+#include "codec2_mod_types.h"
+
 // Define KISS_FFT_SHARED macro to properly export symbols
 #ifdef KISS_FFT_SHARED
 # ifdef _WIN32
@@ -84,10 +86,10 @@ extern "C" {
 # endif
 #endif
 
-typedef struct {
-    kiss_fft_scalar r;
-    kiss_fft_scalar i;
-}kiss_fft_cpx;
+/* Codec2-mod: the complex type is codec2_complex_t (float r, i) from
+   codec2_mod_types.h, so spectra pass through the public API as is. */
+typedef codec2_complex_t kiss_fft_cpx;
+_Static_assert(sizeof(kiss_fft_scalar) == sizeof(float), "Codec2-mod uses float kiss_fft");
 
 typedef struct kiss_fft_state* kiss_fft_cfg;
 

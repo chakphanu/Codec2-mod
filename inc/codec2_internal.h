@@ -9,6 +9,7 @@
 #include <stdint.h>
 #include <math.h>
 
+#include "codec2_mod_types.h"
 #include "kiss_fft.h"
 #include "kiss_fftr.h"
 
@@ -86,6 +87,8 @@
 /* this is the exact Codec2 3200 bps configuration */
 /* changing any of these parameters requires DSP math modification and buffer resizing */
 _Static_assert(BYTES_PER_FRAME == 8, "Codec2 3200 only");
+_Static_assert(BYTES_PER_FRAME == CODEC2_BYTES_PER_FRAME, "public frame size mismatch");
+_Static_assert(SAMPLES_PER_FRAME == CODEC2_SAMPLES_PER_FRAME, "public frame size mismatch");
 _Static_assert(LPC_ORD == 10, "Codec2 3200 assumes LPC_ORD == 10");
 _Static_assert(MAX_AMP >= 80, "MAX_AMP must be >= 80 for Codec2 3200");
 _Static_assert(FFT_ENC == 512, "Codec2 3200 assumes FFT_ENC == 512");
@@ -105,13 +108,13 @@ extern const uint16_t delta_lsp_cb[LPC_ORD][32];
 
 typedef kiss_fft_cpx complex_t;
 
-typedef struct model_t
-{
-    float Wo;
-    int L;
-    float A[MAX_AMP + 1];
-    int voiced;
-} model_t;
+/* the internal model is the public codec2_model_t */
+typedef codec2_model_t model_t;
+
+_Static_assert(MAX_AMP == CODEC2_MAX_AMP, "public MAX_AMP mismatch");
+_Static_assert(LPC_ORD == CODEC2_LPC_ORDER, "public LPC order mismatch");
+_Static_assert(FFT_ENC == CODEC2_FFT_SIZE, "public FFT size mismatch");
+_Static_assert(N_SAMP == CODEC2_SAMPLES_PER_HALF, "public half-frame size mismatch");
 
 typedef struct nlp_t
 {
