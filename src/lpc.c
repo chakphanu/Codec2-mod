@@ -265,12 +265,22 @@ void lsp_to_lpc(
     }
 }
 
-void aks_to_mag2(codec2_decoder_t *c2,
+/* LPC -> harmonic amplitudes, with the optional LPC post filter.
+   Same semantics as aks_to_M2(..., pf, bass_boost, beta, gamma, ...) in
+   upstream Codec2: with post_filter the spectrum 1/|A|^2 is weighted by
+   (|A(z/gamma)| / |A(z)|)^(2*beta), normalised to the energy before the
+   filter, and bass_boost then adds 1.96x (about 3 dB in amplitude) below
+   1 kHz; without post_filter bass_boost has no effect. */
+void aks_to_mag2_opts(codec2_decoder_t *c2,
                         const float *ak, /* LPCs */
                         model_t *model,  /* sinusoidal model parameters for this frame */
                         float E,         /* energy term */
-                        complex_t *Aw,   /* output power spectrum */
-                        float *A2)
+                        int post_filter, /* apply the LPC post filter */
+                        int bass_boost,  /* boost < 1 kHz (post filter only) */
+                        float beta,      /* post filter strength */
+                        float gamma,     /* post filter bandwidth expansion */
+                        complex_t *Aw,   /* output: FFT of A(z), bins 0..FFT_ENC/2 */
+                        float *A2)       /* scratch, FFT_ENC/2 floats */
 {
     int am, bm; /* limits of current band */
 
@@ -288,50 +298,66 @@ void aks_to_mag2(codec2_decoder_t *c2,
         A2[i] = Aw[i].r * Aw[i].r + Aw[i].i * Aw[i].i + 1e-6f;
     }
 
-    /* build ak_gamma */
-    float *ag = (float *)c2->fft_buffer;
-    memset(ag, 0, FFT_ENC * sizeof(float));
-
-    float g = LPCPF_GAMMA;
-    ag[0] = ak[0];
-    for (int i = 1; i <= LPC_ORD; i++)
-    {
-        ag[i] = ak[i] * g;
-        g *= LPCPF_GAMMA;
-    }
-
-    /* FFT of A_gamma */
-    complex_t *Awg = c2->fft_buffer; /* reuse FFT scratch */
-    kiss_fftr(c2->fftr_fwd_cfg, ag, Awg);
-
-    /* reuse Awg storage for A2g */
-    float *A2g = (float *)Awg;
-
-    for (int i = 0; i < FFT_ENC / 2; i++)
-    {
-        A2g[i] = Awg[i].r * Awg[i].r + Awg[i].i * Awg[i].i + 1e-6f;
-    }
-
-    /* compute normalization gain */
-    float e_before = 1e-12f;
-    float e_after = 1e-12f;
     float *Pw = A2;
+    float gain;
 
-    for (int i = 0; i < FFT_ENC / 2; i++)
+    if (post_filter)
     {
-        float invA2 = 1.0f / A2[i];
-        float R = sqrtf(A2g[i] * invA2);
+        /* build ak_gamma */
+        float *ag = (float *)c2->fft_buffer;
+        memset(ag, 0, FFT_ENC * sizeof(float));
 
-        e_before += invA2;
-        Pw[i] = invA2 * fast_powf_pos(R + 1e-5f, LPCPF_TWO_BETA);
-        e_after += Pw[i];
+        float g = gamma;
+        ag[0] = ak[0];
+        for (int i = 1; i <= LPC_ORD; i++)
+        {
+            ag[i] = ak[i] * g;
+            g *= gamma;
+        }
+
+        /* FFT of A_gamma */
+        complex_t *Awg = c2->fft_buffer; /* reuse FFT scratch */
+        kiss_fftr(c2->fftr_fwd_cfg, ag, Awg);
+
+        /* reuse Awg storage for A2g */
+        float *A2g = (float *)Awg;
+
+        for (int i = 0; i < FFT_ENC / 2; i++)
+        {
+            A2g[i] = Awg[i].r * Awg[i].r + Awg[i].i * Awg[i].i + 1e-6f;
+        }
+
+        /* compute normalization gain */
+        float e_before = 1e-12f;
+        float e_after = 1e-12f;
+        const float two_beta = 2.0f * beta;
+
+        for (int i = 0; i < FFT_ENC / 2; i++)
+        {
+            float invA2 = 1.0f / A2[i];
+            float R = sqrtf(A2g[i] * invA2);
+
+            e_before += invA2;
+            Pw[i] = invA2 * fast_powf_pos(R + 1e-5f, two_beta);
+            e_after += Pw[i];
+        }
+
+        /* boost low frequencies a bit (< 1000 Hz) */
+        if (bass_boost)
+        {
+            for (int i = 0; i < FFT_ENC / 2 * 1000 / (SAMP_RATE / 2); i++)
+                Pw[i] *= 1.96f;
+        }
+
+        gain = E * e_before / e_after;
     }
+    else
+    {
+        for (int i = 0; i < FFT_ENC / 2; i++)
+            Pw[i] = 1.0f / A2[i];
 
-    /* boost low frequencies a bit (< 1000 Hz) */
-    for (int i = 0; i < FFT_ENC / 2 * 1000 / (SAMP_RATE / 2); i++)
-        Pw[i] *= 1.96f;
-
-    float gain = E * e_before / e_after;
+        gain = E;
+    }
 
     /* Determine magnitudes */
     for (int m = 1; m <= model->L; m++)
@@ -347,6 +373,17 @@ void aks_to_mag2(codec2_decoder_t *c2,
 
         model->A[m] = sqrtf(Em * gain);
     }
+}
+
+/* the decoder's fixed post filter: on, bass boost on, beta 0.2, gamma 0.5 */
+void aks_to_mag2(codec2_decoder_t *c2,
+                 const float *ak,
+                 model_t *model,
+                 float E,
+                 complex_t *Aw,
+                 float *A2)
+{
+    aks_to_mag2_opts(c2, ak, model, E, 1, 1, LPCPF_BETA, LPCPF_GAMMA, Aw, A2);
 }
 
 /* Apply first harmonic LPC correction at decoder.

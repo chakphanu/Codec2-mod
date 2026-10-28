@@ -56,7 +56,7 @@ static void sample_phase(
 
 static void phase_synth_zero_order(
 	codec2_decoder_t *c2,
-	model_t *model,
+	const model_t *model,
 	float *ex_phase,    /* excitation phase of fundamental        */
 	const complex_t *H, /* L synthesis filter freq domain samples */
 	complex_t *P
@@ -93,7 +93,7 @@ static void phase_synth_zero_order(
 	}
 }
 
-static void postfilter(codec2_decoder_t *restrict c2, model_t *restrict model, float *restrict bg_est, complex_t *restrict P)
+static void postfilter(codec2_decoder_t *restrict c2, const model_t *restrict model, float *restrict bg_est, complex_t *restrict P)
 {
 	static const float k = TWO_PI / CODEC2_RAND_MAX;
 
@@ -223,7 +223,7 @@ static void synthesise(
 void synthesise_one_frame(
 	codec2_decoder_t *c2,
 	int16_t *speech,
-	model_t *model,
+	const model_t *model,
 	const complex_t *Aw,
 	float gain)
 {

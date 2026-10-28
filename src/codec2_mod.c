@@ -87,6 +87,15 @@ void codec2_encode(codec2_encoder_t *c2, uint8_t *bits, const int16_t *speech)
 	}
 }
 
+void codec2_model_opts_default(codec2_model_opts *o)
+{
+	o->post_filter = 1;
+	o->bass_boost = 1;
+	o->beta = LPCPF_BETA;
+	o->gamma = LPCPF_GAMMA;
+	o->lpc_correction = 1;
+}
+
 void codec2_params_init(codec2_params_state *st)
 {
 	st->prev_Wo = TWO_PI / P_MAX;
@@ -156,26 +165,58 @@ void codec2_decode_params(codec2_params_state *st, const uint8_t bits[CODEC2_BYT
 		st->prev_lsps[i] = p[1].lsp[i];
 }
 
-void codec2_decode(codec2_decoder_t *c2, int16_t *speech, const uint8_t *bits)
+void codec2_params_to_model(codec2_decoder_t *c2, const codec2_half_params p[2], const codec2_model_opts *opts,
+							codec2_model_t m[2], codec2_complex_t Aw[2][CODEC2_AW_BINS])
 {
-	model_t model[2] = {0};
-	codec2_half_params p[2];
-	float ak[2][LPC_ORD + 1];
-	complex_t Aw[FFT_ENC / 2 + 1]; /* real FFT output: bins 0..FFT_ENC/2 */
-	float A2[FFT_ENC / 2];
+	codec2_model_opts defaults;
+	float ak[LPC_ORD + 1];
+	/* A2 scratch lives in the top quarter of fft_buffer: aks_to_mag2_opts()
+	   only uses the first FFT_ENC / 2 + 1 complex values of it (the a[] /
+	   ag[] inputs and the A_gamma spectrum), so this keeps the stack small
+	   now that each half has its own Aw[] */
+	float *A2 = (float *)c2->fft_buffer + 2 * FFT_DEC - FFT_ENC / 2;
 
-	/* unpack, dequantise and interpolate the two 10 ms halves */
-	codec2_decode_params(&c2->params, bits, p);
+	if (!opts)
+	{
+		codec2_model_opts_default(&defaults);
+		opts = &defaults;
+	}
 
+	/* Each half gets its own Aw[], so both halves can be modelled before
+	   synthesis. aks_to_mag2_opts() only uses fft_buffer and the forward
+	   FFT tmpbuf as scratch (both fully written before being read), and
+	   synthesis never reads them, so this order gives the same bytes as
+	   the interleaved model/synthesise order of the original decoder. */
 	for (int i = 0; i < 2; i++)
 	{
-		model[i].Wo = p[i].Wo;
-		model[i].L = p[i].L;
-		model[i].voiced = p[i].voiced;
+		memset(&m[i], 0, sizeof(m[i]));
+		m[i].Wo = p[i].Wo;
+		m[i].L = p[i].L;
+		m[i].voiced = p[i].voiced;
 
-		lsp_to_lpc(p[i].lsp, &ak[i][0]);
-		aks_to_mag2(c2, &ak[i][0], &model[i], p[i].e, Aw, A2);
-		apply_lpc_correction(&model[i]);
-		synthesise_one_frame(c2, &speech[N_SAMP * i], &model[i], Aw, 1.0f);
+		lsp_to_lpc(p[i].lsp, ak);
+		aks_to_mag2_opts(c2, ak, &m[i], p[i].e, opts->post_filter, opts->bass_boost,
+						 opts->beta, opts->gamma, Aw[i], A2);
+		if (opts->lpc_correction)
+			apply_lpc_correction(&m[i]);
 	}
 }
+
+void codec2_synthesise(codec2_decoder_t *c2, const codec2_model_t m[2], const codec2_complex_t Aw[2][CODEC2_AW_BINS],
+					   int16_t speech[CODEC2_SAMPLES_PER_FRAME])
+{
+	for (int i = 0; i < 2; i++)
+		synthesise_one_frame(c2, &speech[N_SAMP * i], &m[i], Aw[i], 1.0f);
+}
+
+void codec2_decode(codec2_decoder_t *c2, int16_t *speech, const uint8_t *bits)
+{
+	codec2_half_params p[2];
+	model_t m[2];
+	complex_t Aw[2][CODEC2_AW_BINS];
+
+	codec2_decode_params(&c2->params, bits, p);
+	codec2_params_to_model(c2, p, NULL, m, Aw);
+	codec2_synthesise(c2, m, (const complex_t(*)[CODEC2_AW_BINS])Aw, speech);
+}
+

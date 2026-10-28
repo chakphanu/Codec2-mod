@@ -7,7 +7,7 @@
 void synthesise_one_frame(
     codec2_decoder_t *c2,
     int16_t *speech,
-    model_t *model,
+    const model_t *model,
     const complex_t *Aw,
     float gain
 );

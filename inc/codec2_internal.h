@@ -172,5 +172,8 @@ typedef struct codec2_t
 } codec2_t;
 
 _Static_assert(sizeof(((codec2_t *)0)->encoder.fft_buffer) >= FFT_ENC * sizeof(kiss_fft_cpx), "fft_buffer too small for FFT_ENC scratch");
+/* decoder: A_gamma spectrum (FFT_ENC / 2 + 1 complex) and the A2 scratch
+   (FFT_ENC / 2 floats at the top) must not overlap */
+_Static_assert((FFT_ENC / 2 + 1) * sizeof(kiss_fft_cpx) <= (2 * FFT_DEC - FFT_ENC / 2) * sizeof(float), "A2 scratch overlaps A_gamma");
 
 #endif /* CODEC2_MOD_INTERNAL_H */

@@ -11,6 +11,20 @@ void aks_to_mag2(
     complex_t *Aw,
     float *A2);
 
+/* aks_to_mag2() with the post filter options (aks_to_mag2() uses
+   post_filter 1, bass_boost 1, LPCPF_BETA, LPCPF_GAMMA) */
+void aks_to_mag2_opts(
+    codec2_decoder_t *c2,
+    const float *ak,
+    model_t *model,
+    float E,
+    int post_filter,
+    int bass_boost,
+    float beta,
+    float gamma,
+    complex_t *Aw,
+    float *A2);
+
 float speech_to_uq_lsps(
     codec2_encoder_t *c2,
     float *restrict lsp,
