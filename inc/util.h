@@ -2,6 +2,8 @@
 #define CODEC2_MOD_UTIL_H
 
 #include <stdint.h>
+
+#include "codec2_mod_prefix.h" /* optional symbol prefix, off by default */
 #include <math.h>
 
 float fast_atan2f(float y, float x);

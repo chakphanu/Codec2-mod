@@ -1,5 +1,7 @@
 #include <stdint.h>
 
+#include "codec2_mod_prefix.h" /* optional symbol prefix, off by default */
+
 const uint16_t delta_lsp_cb[10][32] =
 {
 	{

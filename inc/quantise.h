@@ -3,6 +3,8 @@
 
 #include <stdint.h>
 
+#include "codec2_mod_prefix.h" /* optional symbol prefix, off by default */
+
 void pack(uint8_t *bitArray, unsigned int *bitIndex,
           unsigned int field, unsigned int fieldWidth);
 

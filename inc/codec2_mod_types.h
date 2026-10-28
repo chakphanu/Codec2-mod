@@ -5,10 +5,13 @@
   Types and sizes shared by the public header (codec2_mod.h) and the
   internal headers (codec2_internal.h, kiss_fft.h), so each type has
   exactly one definition. Only CODEC2_* macros and codec2_* types live
-  here; this header must stay C99 clean and include nothing but stdint.h.
+  here; this header must stay C99 clean and include nothing but stdint.h
+  and codec2_mod_prefix.h (empty unless CODEC2_MOD_PREFIX is defined).
 */
 
 #include <stdint.h>
+
+#include "codec2_mod_prefix.h"
 
 /* frame layout of the 3200 bps mode */
 #define CODEC2_BYTES_PER_FRAME 8
