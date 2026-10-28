@@ -135,6 +135,82 @@ codec2_decode(&c2.decoder, speech, encoded);
 
 No destroy/free function is required. The encoder and decoder can be initialized and used independently.
 
+## Vocoder API (branch `vocoder-api`)
+
+Additions for callers that work on the Codec2 parameters rather than only on
+PCM (parameter transcoders, neural vocoder front ends). Nothing existing is
+renamed: every exported function, type and macro of `main` keeps its name and
+meaning, and `codec2_mod.h` still includes `codec2_internal.h` by default, so
+code such as Codec2-mod-neural's `c2f_features.c` builds unchanged.
+`codec2_decode()` output is byte-identical to `main`. The encoder now traps
+only exactly zero frame energy like upstream (`e == 0.0f`), which makes it
+bit-exact with `c2enc 3200` also on very quiet (energy index 0) frames.
+
+The decoder is three layers; `codec2_decode(dec, speech, bits)` is exactly
+
+```c
+codec2_half_params p[2];                 /* Wo, L, voiced, e, lsp[10] per 10 ms */
+codec2_model_t m[2];                     /* == model_t */
+codec2_complex_t Aw[2][CODEC2_AW_BINS];  /* == complex_t, FFT of A(z) */
+
+codec2_decode_params(&dec->params, bits, p);   /* unpack, dequantise, interpolate */
+codec2_params_to_model(dec, p, NULL, m, Aw);    /* LSP -> LPC -> amplitudes */
+codec2_synthesise(dec, m, Aw, speech);          /* phases, post filter, overlap-add */
+```
+
+| Function | Purpose |
+|---|---|
+| `codec2_params_init(&st)` | parameter history with the values of `codec2_decoder_init()`; `codec2_params_state` has the fields of Codec2-mod-neural's `c2f_params_state` |
+| `codec2_decode_params(&st, bits, p)` | the parameter half of `codec2_decode()` |
+| `codec2_params_to_model(dec, p, &opts, m, Aw)` | `codec2_model_opts` {`post_filter`, `bass_boost`, `beta`, `gamma`, `lpc_correction`} with upstream `aks_to_M2()` semantics; `NULL` = defaults |
+| `codec2_model_opts_default(&opts)` | defaults used by `codec2_decode()`: on, on, 0.2, 0.5, on |
+| `codec2_synthesise(dec, m, Aw, speech)` | synthesis of both halves |
+| `codec2_decoder_reseed(dec, seed)` | set the per-instance phase generator (init sets 1) |
+
+Encoder side (building frames without PCM analysis):
+
+| Function | Purpose |
+|---|---|
+| `codec2_pack_params(bits, v0, &p1)` | quantise and pack exactly as `codec2_encode()` does after analysis (`p1` = second half) |
+| `codec2_levinson_durbin(R, ak)` | order 10 Levinson-Durbin, same math as the encoder |
+| `codec2_lpc_bw_expand(ak)` | the encoder's 15 Hz bandwidth expansion |
+| `codec2_lpc_to_lsp(ak, lsp)` | LPC to LSP with the encoder's root search; returns the root count, flat LSPs when it is not 10 |
+| `CODEC2_WO_MIN`, `CODEC2_WO_MAX`, `codec2_wo_limits()` | Wo range of the 7-bit quantiser |
+
+Misc: `codec2_mod_version()`, `codec2_size()`, `codec2_encoder_size()`,
+`codec2_decoder_size()`, `codec2_state_alignment()`.
+
+**Clean-header mode (opt-in).** Define `CODEC2_MOD_PUBLIC_ONLY` before
+including `codec2_mod.h`: `codec2_internal.h` is then not included, no
+unprefixed macro leaks (only `CODEC2_*`), the state types are opaque and the
+header is C99 clean. Allocate the state yourself:
+
+```c
+#define CODEC2_MOD_PUBLIC_ONLY
+#include "codec2_mod.h"
+
+codec2_decoder_t *dec = aligned_alloc(codec2_state_alignment(),
+                                      codec2_decoder_size()); /* size rounded up to the alignment if needed */
+codec2_decoder_init(dec);
+```
+
+The public types live in `codec2_mod_types.h`, which the internal headers
+include too, so `codec2_model_t` is `model_t` and `codec2_complex_t` is
+`complex_t` in both modes.
+
+**Symbol prefix (opt-in).** Building the library and its callers with
+`-DCODEC2_MOD_PREFIX=c2m_` prefixes every global symbol (API and exported
+internals), so the archive can be linked next to upstream `libcodec2`; see
+`inc/codec2_mod_prefix.h`. Off by default.
+
+**Build and tests.** `make` builds `build/libcodec2_mod.a`, the CLI pair
+`c2m_enc` / `c2m_dec` (raw s16le 8 kHz <-> 8-byte frames, clean-header mode;
+`c2m_dec` exposes the model options and the seed) and the tests;
+`make check INPUT=speech.raw REF_BIT=speech.bit [REF_PCM=dec.raw]` checks the
+encoder against a reference bitstream (e.g. from `c2enc 3200`), the decoder
+layers, options, reseed and pack identities (`c2m_test`) and the clean-header
+mode compiled as C99 (`c2m_public_only`).
+
 ## Important notice: derivative work
 
 > [!NOTE]
