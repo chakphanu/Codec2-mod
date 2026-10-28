@@ -162,6 +162,19 @@ extern "C"
        CODEC2_WO_MAX as float). Either pointer may be NULL. */
     void codec2_wo_limits(float *wo_min, float *wo_max);
 
+    /* Set the decoder's phase generator (unvoiced and post filter phases).
+       codec2_decoder_init() sets it to 1. Only the generator is changed. */
+    void codec2_decoder_reseed(codec2_decoder_t *c2, uint32_t seed);
+
+    /* library version string, e.g. "codec2-mod 3200 vocoder-api 2" */
+    const char *codec2_mod_version(void);
+
+    /* state sizes for opaque allocation */
+    size_t codec2_size(void);
+    size_t codec2_encoder_size(void);
+    size_t codec2_decoder_size(void);
+    size_t codec2_state_alignment(void);
+
 #ifdef __cplusplus
 }
 #endif

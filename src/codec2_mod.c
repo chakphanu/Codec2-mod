@@ -236,3 +236,33 @@ void codec2_decode(codec2_decoder_t *c2, int16_t *speech, const uint8_t *bits)
 	codec2_synthesise(c2, m, (const complex_t(*)[CODEC2_AW_BINS])Aw, speech);
 }
 
+size_t codec2_size(void)
+{
+	return sizeof(codec2_t);
+}
+
+size_t codec2_encoder_size(void)
+{
+	return sizeof(codec2_encoder_t);
+}
+
+size_t codec2_decoder_size(void)
+{
+	return sizeof(codec2_decoder_t);
+}
+
+size_t codec2_state_alignment(void)
+{
+	/* codec2_t contains both structs, so its alignment covers each of them */
+	return _Alignof(codec2_t);
+}
+
+void codec2_decoder_reseed(codec2_decoder_t *c2, uint32_t seed)
+{
+	c2->next_rn = seed;
+}
+
+const char *codec2_mod_version(void)
+{
+	return "codec2-mod 3200 vocoder-api 2";
+}
