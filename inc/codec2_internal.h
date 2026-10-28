@@ -153,9 +153,8 @@ typedef struct codec2_decoder_t
     float ex_phase;
     float bg_est;
 
-    model_t prev_model_dec;
-    float prev_lsps_dec[LPC_ORD];
-    float prev_e_dec;
+    /* parameter history (codec2_decode_params) */
+    codec2_params_state params;
 
     kiss_fftr_cfg fftr_fwd_cfg;
     kiss_fftr_cfg fftr_inv_cfg;

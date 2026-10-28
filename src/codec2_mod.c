@@ -51,17 +51,7 @@ void codec2_decoder_init(codec2_decoder_t *c2)
 	c2->bg_est = 0.0;
 	c2->ex_phase = 0.0;
 
-	for (int l = 1; l <= MAX_AMP; l++)
-		c2->prev_model_dec.A[l] = 0.0;
-
-	c2->prev_model_dec.Wo = TWO_PI / P_MAX;
-	c2->prev_model_dec.L = M_PI / c2->prev_model_dec.Wo;
-	c2->prev_model_dec.voiced = 0;
-
-	for (int i = 0; i < LPC_ORD; i++)
-		c2->prev_lsps_dec[i] = i * M_PI / (LPC_ORD + 1);
-
-	c2->prev_e_dec = 1;
+	codec2_params_init(&c2->params);
 }
 
 void codec2_encode(codec2_encoder_t *c2, uint8_t *bits, const int16_t *speech)
@@ -97,16 +87,28 @@ void codec2_encode(codec2_encoder_t *c2, uint8_t *bits, const int16_t *speech)
 	}
 }
 
-void codec2_decode(codec2_decoder_t *c2, int16_t *speech, const uint8_t *bits)
+void codec2_params_init(codec2_params_state *st)
+{
+	st->prev_Wo = TWO_PI / P_MAX;
+	st->prev_L = M_PI / st->prev_Wo;
+	st->prev_voiced = 0;
+	st->prev_e = 1;
+
+	for (int i = 0; i < LPC_ORD; i++)
+		st->prev_lsps[i] = i * M_PI / (LPC_ORD + 1);
+}
+
+void codec2_decode_params(codec2_params_state *st, const uint8_t bits[CODEC2_BYTES_PER_FRAME], codec2_half_params p[2])
 {
 	model_t model[2] = {0};
+	model_t prev = {0};
 	int lspd_indexes[LPC_ORD];
-	float lsps[2][LPC_ORD];
 	int Wo_index, e_index;
-	float e[2];
-	float ak[2][LPC_ORD + 1];
-	complex_t Aw[FFT_ENC / 2 + 1]; /* real FFT output: bins 0..FFT_ENC/2 */
-	float A2[FFT_ENC / 2];
+
+	/* only Wo and voicing of the previous half are used by interp_Wo() */
+	prev.Wo = st->prev_Wo;
+	prev.L = st->prev_L;
+	prev.voiced = st->prev_voiced;
 
 	/* unpack bits from channel ------------------------------------*/
 	unsigned int nbit = 0;
@@ -120,35 +122,60 @@ void codec2_decode(codec2_decoder_t *c2, int16_t *speech, const uint8_t *bits)
 	model[1].L = M_PI / model[1].Wo;
 
 	e_index = unpack(bits, &nbit, E_BITS);
-	e[1] = decode_energy(e_index, E_BITS);
+	p[1].e = decode_energy(e_index, E_BITS);
 
 	for (int i = 0; i < LSPD_SCALAR_INDEXES; i++)
 	{
 		lspd_indexes[i] = unpack(bits, &nbit, 5); // codebook indices are 5 bits
 	}
-	decode_lspds_scalar(&lsps[1][0], lspd_indexes);
+	decode_lspds_scalar(p[1].lsp, lspd_indexes);
 
 	/* interpolate ------------------------------------------------*/
 	/* Wo and energy are sampled every 20ms, so we interpolate just 1
 	   10ms frame between 20ms samples */
-	interp_Wo(&model[0], &c2->prev_model_dec, &model[1]);
-	e[0] = interp_energy(c2->prev_e_dec, e[1]);
+	interp_Wo(&model[0], &prev, &model[1]);
+	p[0].e = interp_energy(st->prev_e, p[1].e);
 
 	/* LSPs are sampled every 20ms so we interpolate the frame in
-	   between, then recover spectral amplitudes */
-	interpolate_lsp(&lsps[0][0], c2->prev_lsps_dec, &lsps[1][0]);
+	   between */
+	interpolate_lsp(p[0].lsp, st->prev_lsps, p[1].lsp);
 
 	for (int i = 0; i < 2; i++)
 	{
-		lsp_to_lpc(&lsps[i][0], &ak[i][0]);
-		aks_to_mag2(c2, &ak[i][0], &model[i], e[i], Aw, A2);
-		apply_lpc_correction(&model[i]);
-		synthesise_one_frame(c2, &speech[N_SAMP * i], &model[i], Aw, 1.0f);
+		p[i].Wo = model[i].Wo;
+		p[i].L = model[i].L;
+		p[i].voiced = model[i].voiced;
 	}
 
 	/* update memories for next frame ----------------------------*/
-	c2->prev_model_dec = model[1];
-	c2->prev_e_dec = e[1];
+	st->prev_Wo = p[1].Wo;
+	st->prev_L = p[1].L;
+	st->prev_voiced = p[1].voiced;
+	st->prev_e = p[1].e;
 	for (int i = 0; i < LPC_ORD; i++)
-		c2->prev_lsps_dec[i] = lsps[1][i];
+		st->prev_lsps[i] = p[1].lsp[i];
+}
+
+void codec2_decode(codec2_decoder_t *c2, int16_t *speech, const uint8_t *bits)
+{
+	model_t model[2] = {0};
+	codec2_half_params p[2];
+	float ak[2][LPC_ORD + 1];
+	complex_t Aw[FFT_ENC / 2 + 1]; /* real FFT output: bins 0..FFT_ENC/2 */
+	float A2[FFT_ENC / 2];
+
+	/* unpack, dequantise and interpolate the two 10 ms halves */
+	codec2_decode_params(&c2->params, bits, p);
+
+	for (int i = 0; i < 2; i++)
+	{
+		model[i].Wo = p[i].Wo;
+		model[i].L = p[i].L;
+		model[i].voiced = p[i].voiced;
+
+		lsp_to_lpc(p[i].lsp, &ak[i][0]);
+		aks_to_mag2(c2, &ak[i][0], &model[i], p[i].e, Aw, A2);
+		apply_lpc_correction(&model[i]);
+		synthesise_one_frame(c2, &speech[N_SAMP * i], &model[i], Aw, 1.0f);
+	}
 }

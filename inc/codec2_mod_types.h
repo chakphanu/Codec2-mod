@@ -37,4 +37,25 @@ typedef struct codec2_model_t
     int voiced;                  /* 1 = voiced */
 } codec2_model_t;
 
+/* decoded Codec2 parameters of one 10 ms half frame */
+typedef struct
+{
+    float Wo;                      /* fundamental, rad/sample */
+    int L;                         /* number of harmonics, (int)(pi / Wo) */
+    int voiced;                    /* 1 = voiced */
+    float e;                       /* linear LPC energy */
+    float lsp[CODEC2_LPC_ORDER];   /* LSPs in radians */
+} codec2_half_params;
+
+/* parameter decoder history: the second half of the previous frame.
+   Same fields as c2f_params_state in Codec2-mod-neural. */
+typedef struct
+{
+    float prev_Wo;
+    int prev_L;
+    int prev_voiced;
+    float prev_e;
+    float prev_lsps[CODEC2_LPC_ORDER];
+} codec2_params_state;
+
 #endif /* CODEC2_MOD_TYPES_H */

@@ -45,6 +45,26 @@ extern "C"
         int16_t *speech,
         const uint8_t *bits);
 
+    /*
+      Parameter layer (shared with Codec2-mod-neural): the parameter half
+      of codec2_decode(), usable on its own, e.g. by a caller that only
+      needs the decoded parameters (a neural vocoder front end) with its
+      own codec2_params_state. The decoder keeps its history in
+      c2->params.
+    */
+
+    /* initial history, the same values codec2_decoder_init() uses */
+    void codec2_params_init(codec2_params_state *st);
+
+    /* Unpack and dequantise one frame and interpolate the first half:
+       p[0] = first 10 ms (Wo / voicing / energy / LSPs interpolated from
+       the previous frame), p[1] = second 10 ms (as transmitted). Updates
+       st. This is the parameter half of codec2_decode(). */
+    void codec2_decode_params(
+        codec2_params_state *st,
+        const uint8_t bits[CODEC2_BYTES_PER_FRAME],
+        codec2_half_params p[2]);
+
 #ifdef __cplusplus
 }
 #endif
