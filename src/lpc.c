@@ -439,8 +439,10 @@ float speech_to_uq_lsps(
         e += Wn[i] * Wn[i];
     }
 
-    /* trap 0 energy case as LPC analysis will fail */
-    if (e < LPC_ENERGY_FLOOR)
+    /* trap 0 energy case as LPC analysis will fail
+       (exact zero test as in upstream quantise.c, keeps the bitstream
+       identical on very quiet frames) */
+    if (e == 0.0f)
     {
         benign_lsps(lsp);
 
