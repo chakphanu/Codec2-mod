@@ -116,6 +116,52 @@ extern "C"
         const codec2_complex_t Aw[2][CODEC2_AW_BINS],
         int16_t speech[CODEC2_SAMPLES_PER_FRAME]);
 
+    /*
+      Encoder-side helpers for callers that build the parameters themselves
+      (no PCM analysis). The 3200 encoder does, per 20 ms frame:
+          R[0..10]  autocorrelation of the windowed speech
+          codec2_levinson_durbin(R, ak);
+          e = sum(ak[i] * R[i], i = 0..10);   (before bandwidth expansion)
+          codec2_lpc_bw_expand(ak);           (15 Hz expansion)
+          codec2_lpc_to_lsp(ak, lsp);
+          p1 = {Wo, L, v1, e, lsp} of the second 10 ms half
+          codec2_pack_params(bits, v0, &p1);
+      with v0 the voicing of the first half.
+    */
+
+    /* order 10 Levinson-Durbin, same math as the encoder. Returns the number
+       of unstable reflection coefficients that were replaced by 0, or -1 if
+       R[0] <= 0 (ak is then 1, 0, ..., 0). */
+    int codec2_levinson_durbin(
+        const float R[CODEC2_LPC_ORDER + 1],
+        float ak[CODEC2_LPC_ORDER + 1]);
+
+    /* the encoder's 15 Hz bandwidth expansion: ak[i] *= 0.994^i (table) */
+    void codec2_lpc_bw_expand(float ak[CODEC2_LPC_ORDER + 1]);
+
+    /* LPC -> LSP (radians) with the encoder's Chebyshev root search (grid
+       step 0.01, 6 bisections). Returns the number of roots found; if it is
+       not CODEC2_LPC_ORDER, lsp[] is set to the encoder's fallback values
+       (i * pi / 10), as codec2_encode() does. */
+    int codec2_lpc_to_lsp(
+        const float ak[CODEC2_LPC_ORDER + 1],
+        float lsp[CODEC2_LPC_ORDER]);
+
+    /* Quantise and pack one frame exactly as codec2_encode() does after
+       analysis: v0 (1 bit), p1->voiced (1 bit), p1->Wo (7 bits),
+       p1->e (5 bits), 10 scalar LSP deltas of p1->lsp (5 bits each),
+       Gray coded, MSB first. p1 is the second 10 ms half (Wo in
+       rad/sample, e = linear LPC energy, lsp in radians; L is not used),
+       v0 the voicing of the first half. */
+    void codec2_pack_params(
+        uint8_t bits[CODEC2_BYTES_PER_FRAME],
+        int v0,
+        const codec2_half_params *p1);
+
+    /* Wo range of the 7-bit quantiser in rad/sample (CODEC2_WO_MIN and
+       CODEC2_WO_MAX as float). Either pointer may be NULL. */
+    void codec2_wo_limits(float *wo_min, float *wo_max);
+
 #ifdef __cplusplus
 }
 #endif

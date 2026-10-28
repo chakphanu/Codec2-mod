@@ -34,11 +34,14 @@ static void autocorrelate(
     }
 }
 
-static void levinson_durbin(
+/* returns the number of reflection coefficients with |k| > 1 that were
+   replaced by 0 */
+static int levinson_durbin(
     const float *restrict R, /* order+1 autocorrelation coeff */
     float *restrict lpcs     /* order+1 LPC's */
 )
 {
+    int clamped = 0;
     float a[LPC_ORD + 1];
     float a_prev[LPC_ORD + 1];
     float e, k, sum;
@@ -56,7 +59,10 @@ static void levinson_durbin(
         k = -(R[i] + sum) / e;
 
         if (fabsf(k) > 1.0f)
+        {
             k = 0.0f;
+            clamped++;
+        }
 
         a[i] = k;
 
@@ -74,6 +80,8 @@ static void levinson_durbin(
     lpcs[0] = 1.0f;
     for (int i = 1; i <= LPC_ORD; i++)
         lpcs[i] = a[i];
+
+    return clamped;
 }
 
 /* NOTE: this function uses fully unrolled loop for LPC_ORD=10 */
@@ -122,6 +130,10 @@ static int lpc_to_lsp(
     float P[LPC_ORD + 1];
 
     int m = LPC_ORD / 2; /* order of P'(z) & Q'(z) polynimials 	*/
+
+    /* roots that are not found keep a defined value */
+    for (int i = 0; i < LPC_ORD; i++)
+        freq[i] = 0.0f;
 
     P[0] = Q[0] = 1.0f;
     for (int i = 1; i <= m; i++)
@@ -210,6 +222,13 @@ static int lpc_to_lsp(
     }
 
     return (roots);
+}
+
+/* benign LSPs used by the encoder when LPC analysis or root finding fails */
+static void benign_lsps(float *lsp)
+{
+    for (int i = 0; i < LPC_ORD; i++)
+        lsp[i] = (M_PI / LPC_ORD) * (float)i;
 }
 
 void lsp_to_lpc(
@@ -423,8 +442,7 @@ float speech_to_uq_lsps(
     /* trap 0 energy case as LPC analysis will fail */
     if (e < LPC_ENERGY_FLOOR)
     {
-        for (int i = 0; i < LPC_ORD; i++)
-            lsp[i] = (M_PI / LPC_ORD) * (float)i;
+        benign_lsps(lsp);
 
         memset(ak, 0, (LPC_ORD + 1) * sizeof(float));
         ak[0] = 1.0f;
@@ -452,11 +470,40 @@ float speech_to_uq_lsps(
     if (roots != LPC_ORD)
     {
         /* if root finding fails use some benign LSP values instead */
-        for (int i = 0; i < LPC_ORD; i++)
-            lsp[i] = (M_PI / LPC_ORD) * (float)i;
+        benign_lsps(lsp);
     }
 
     *energy = E;
 
     return (E >= 0.0f) ? 0 : 1;
+}
+
+/* public encoder-side helpers ---------------------------------------------*/
+
+int codec2_levinson_durbin(const float R[CODEC2_LPC_ORDER + 1], float ak[CODEC2_LPC_ORDER + 1])
+{
+    if (!(R[0] > 0.0f))
+    {
+        memset(ak, 0, (LPC_ORD + 1) * sizeof(float));
+        ak[0] = 1.0f;
+        return -1;
+    }
+
+    return levinson_durbin(R, ak);
+}
+
+void codec2_lpc_bw_expand(float ak[CODEC2_LPC_ORDER + 1])
+{
+    for (int i = 0; i <= LPC_ORD; i++)
+        ak[i] *= bw_gamma[i];
+}
+
+int codec2_lpc_to_lsp(const float ak[CODEC2_LPC_ORDER + 1], float lsp[CODEC2_LPC_ORDER])
+{
+    int roots = lpc_to_lsp(ak, lsp);
+
+    if (roots != LPC_ORD)
+        benign_lsps(lsp);
+
+    return roots;
 }

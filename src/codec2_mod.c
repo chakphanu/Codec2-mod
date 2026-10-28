@@ -54,37 +54,53 @@ void codec2_decoder_init(codec2_decoder_t *c2)
 	codec2_params_init(&c2->params);
 }
 
-void codec2_encode(codec2_encoder_t *c2, uint8_t *bits, const int16_t *speech)
+void codec2_pack_params(uint8_t bits[CODEC2_BYTES_PER_FRAME], int v0, const codec2_half_params *p1)
 {
-	model_t model = {0};
-	float ak[LPC_ORD + 1];
-	float lsps[LPC_ORD];
-	float e;
-	int Wo_index, e_index;
 	int lspd_indexes[LPC_ORD];
 	unsigned int nbit = 0;
 
 	memset(bits, 0, BYTES_PER_FRAME); // 64 bits
 
-	/* first 10ms analysis frame - we just want voicing */
-	analyse_one_frame(c2, &model, speech);
-	pack(bits, &nbit, model.voiced, 1);
+	pack(bits, &nbit, v0 != 0, 1);
+	pack(bits, &nbit, p1->voiced != 0, 1);
+	pack(bits, &nbit, encode_Wo(p1->Wo, WO_BITS), WO_BITS);
+	pack(bits, &nbit, encode_energy(p1->e, E_BITS), E_BITS);
 
-	/* second 10ms analysis frame */
-	analyse_one_frame(c2, &model, &speech[N_SAMP]);
-	pack(bits, &nbit, model.voiced, 1);
-	Wo_index = encode_Wo(model.Wo, WO_BITS);
-	pack(bits, &nbit, Wo_index, WO_BITS);
-
-	speech_to_uq_lsps(c2, lsps, ak, &e, c2->Sn, c2->w);
-	e_index = encode_energy(e, E_BITS);
-	pack(bits, &nbit, e_index, E_BITS);
-
-	encode_lspds_scalar(lspd_indexes, lsps);
+	encode_lspds_scalar(lspd_indexes, p1->lsp);
 	for (int i = 0; i < LSPD_SCALAR_INDEXES; i++)
 	{
 		pack(bits, &nbit, lspd_indexes[i], 5); // codebook indices are 5 bits
 	}
+}
+
+void codec2_encode(codec2_encoder_t *c2, uint8_t *bits, const int16_t *speech)
+{
+	model_t model = {0};
+	float ak[LPC_ORD + 1];
+	codec2_half_params p1;
+	int v0;
+
+	/* first 10ms analysis frame - we just want voicing */
+	analyse_one_frame(c2, &model, speech);
+	v0 = model.voiced;
+
+	/* second 10ms analysis frame */
+	analyse_one_frame(c2, &model, &speech[N_SAMP]);
+	p1.Wo = model.Wo;
+	p1.L = model.L;
+	p1.voiced = model.voiced;
+
+	speech_to_uq_lsps(c2, p1.lsp, ak, &p1.e, c2->Sn, c2->w);
+
+	codec2_pack_params(bits, v0, &p1);
+}
+
+void codec2_wo_limits(float *wo_min, float *wo_max)
+{
+	if (wo_min)
+		*wo_min = W0_MIN;
+	if (wo_max)
+		*wo_max = W0_MAX;
 }
 
 void codec2_model_opts_default(codec2_model_opts *o)

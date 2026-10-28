@@ -21,6 +21,11 @@
 #define CODEC2_FFT_SIZE 512
 #define CODEC2_AW_BINS (CODEC2_FFT_SIZE / 2 + 1) /* real FFT bins 0..FFT/2 */
 
+/* range of the 7-bit Wo quantiser in rad/sample, 2 pi / 160 .. 2 pi / 20
+   (50 .. 400 Hz at 8 kHz); the same values as W0_MIN / W0_MAX */
+#define CODEC2_WO_MIN (2.0 * 3.14159265358979323846 / 160.0)
+#define CODEC2_WO_MAX (2.0 * 3.14159265358979323846 / 20.0)
+
 /* complex value, float real and imaginary parts (the internal complex_t) */
 typedef struct codec2_complex_t
 {
