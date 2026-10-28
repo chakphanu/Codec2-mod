@@ -4,20 +4,30 @@
 /*
   Public API of Codec2-mod (Codec2 3200 bps).
 
-  This header includes codec2_internal.h, exactly as on main, so the codec
-  state structs are complete types and the internal configuration macros
-  (LPC_ORD, TWO_PI, ...), model_t and complex_t are visible. Code that uses
-  the exported internals (quantise.h, interp.h, lpc.h) keeps building
-  unchanged.
+  Default: this header includes codec2_internal.h, exactly as on main, so
+  the codec state structs are complete types and the internal
+  configuration macros (LPC_ORD, TWO_PI, ...), model_t and complex_t are
+  visible. Code that uses the exported internals (quantise.h, interp.h,
+  lpc.h) keeps building unchanged.
+
+  Clean mode: define CODEC2_MOD_PUBLIC_ONLY before including this header.
+  Then codec2_internal.h is not included, no unprefixed macro is defined
+  (only CODEC2_* and the include guards), the state types
+  codec2_t / codec2_encoder_t / codec2_decoder_t are opaque, and the
+  caller allocates codec2_encoder_size() / codec2_decoder_size() bytes
+  aligned to codec2_state_alignment(). The header is C99 clean in this
+  mode. The library itself is always built without it.
 
   The public types and sizes (codec2_model_t == model_t,
-  codec2_complex_t == complex_t, CODEC2_* constants) come from
-  codec2_mod_types.h, which the internal headers include as well, so
-  every type has one definition.
+  codec2_complex_t == complex_t, codec2_half_params, codec2_params_state,
+  CODEC2_* constants) come from codec2_mod_types.h, which the internal
+  headers include as well, so every type has one definition.
 */
 
 #include "codec2_mod_types.h"
+#ifndef CODEC2_MOD_PUBLIC_ONLY
 #include "codec2_internal.h"
+#endif
 
 #include <stddef.h>
 #include <stdint.h>
